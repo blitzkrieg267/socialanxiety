@@ -1,0 +1,15 @@
+# Local override — run Postiz on your own machine at http://localhost:4007,
+# with NO Caddy reverse proxy and NO public domain/HTTPS.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.local.yaml up -d
+#   open http://localhost:4007
+#
+# (The helper script scripts/run-local.sh wraps this for you.)
+
+services:
+  # Caddy would try to fetch a Let's Encrypt cert for a public domain, which
+  # makes no sense locally. Putting it behind a profile keeps it from starting
+  # unless you explicitly ask for it, without affecting the production file.
+  caddy:
+    profiles: ["prod-only"]

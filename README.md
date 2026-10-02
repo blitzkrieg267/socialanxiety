@@ -44,7 +44,39 @@ Groups are all you need.)
 
 ---
 
-## Prerequisites
+## Run it locally (evaluate on your own machine)
+
+Want to try Postiz on your own computer before committing to a server? You can.
+
+**You need:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running, ~**8 GB+ free RAM** (16 GB comfortable), and ~**10 GB free disk** (images are ~5-6 GB).
+
+```bash
+# macOS / Linux / Windows(Git Bash or WSL)
+cd ~/Desktop
+git clone https://github.com/blitzkrieg267/socialanxiety.git TLPOSTER
+cd TLPOSTER
+bash scripts/run-local.sh      # checks Docker + RAM, writes .env, starts the stack
+```
+
+Then open **http://localhost:4007**, register your account, and explore.
+
+> **What local mode is / isn't:** great for exploring the UI and features. But it
+> only runs while your computer is on, lives at `localhost` (not reachable by
+> clients), and **most social-network logins require a public HTTPS URL** — so
+> connecting real X/LinkedIn/etc. accounts generally won't work from localhost.
+> For 24/7 publishing and client access you'll move the same repo to an
+> always-on server (see the sections below). Local uses `.env.local.example`;
+> the server uses `.env.example`.
+
+**Stop / start:**
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.local.yaml down   # stop
+bash scripts/run-local.sh                                                 # start again
+```
+
+---
+
+## Prerequisites (server deployment)
 
 - An Oracle Cloud account (free tier is fine).
 - The `post` subdomain available on `tasklink.tech` (managed at Namecheap).
