@@ -1,0 +1,10 @@
+# Secrets & local config — NEVER commit these.
+.env
+.env.*
+!.env.example
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+*.log

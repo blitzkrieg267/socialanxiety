@@ -1,0 +1,65 @@
+name: Deploy to VM
+
+# Fires on every push to main (your working line) and can also be run by hand
+# from the Actions tab. It SSHes into the Oracle Cloud VM, fast-forwards the
+# checkout to match this repo, pulls the latest images, and recreates the stack.
+#
+# Your VM's .env is git-ignored, so `git reset --hard` never touches your
+# secrets — only tracked files (compose, Caddyfile, configs) are updated.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Prefer a pinned host key (secret VM_SSH_KNOWN_HOSTS); fall back to
+          # a live scan if it isn't set.
+          if [ -n "${{ secrets.VM_SSH_KNOWN_HOSTS }}" ]; then
+            printf '%s\n' "${{ secrets.VM_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_PATH: ${{ secrets.VM_PATH }}
+        run: |
+          # VM_PATH is expanded locally and passed as $1 to the remote shell;
+          # the heredoc itself is single-quoted so nothing else expands here.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
+              "${VM_SSH_USER}@${VM_HOST}" bash -s -- "${VM_PATH}" <<'REMOTE'
+          set -euo pipefail
+          cd "${1:-$HOME/socialanxiety}"
+          echo "==> Syncing repo to origin/main"
+          git fetch --prune origin
+          git reset --hard origin/main
+          echo "==> Pulling latest images"
+          docker compose pull
+          echo "==> Recreating stack"
+          docker compose up -d --remove-orphans
+          echo "==> Cleaning up old images"
+          docker image prune -f
+          echo "==> Done. Current services:"
+          docker compose ps
+          REMOTE
+
+      - name: Summary
+        if: always()
+        run: echo "Deploy step finished with status ${{ job.status }}."
