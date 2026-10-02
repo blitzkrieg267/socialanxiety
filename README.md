@@ -1,8 +1,8 @@
 # socialanxiety
 
 Self-hosted **[Postiz](https://postiz.com)** social-media management, deployed
-with Docker Compose behind an auto-HTTPS Caddy reverse proxy, built to run on an
-**Oracle Cloud Always-Free** VM and served at **https://post.tasklink.tech**.
+with Docker Compose behind an auto-HTTPS Caddy reverse proxy, built to run on any
+**Ubuntu VM** (these docs target **Azure**) and served at **https://post.tasklink.tech**.
 
 This is your working copy of the Postiz deployment stack. You push changes here;
 a GitHub Actions pipeline syncs them to the VM automatically.
@@ -78,28 +78,37 @@ bash scripts/run-local.sh                                                 # star
 
 ## Prerequisites (server deployment)
 
-- An Oracle Cloud account (free tier is fine).
+- An Azure account (the $200 free credit covers a few months).
 - The `post` subdomain available on `tasklink.tech` (managed at Namecheap).
 - This repo (`socialanxiety`) on GitHub.
 
 ---
 
-## 1. Create the Oracle Cloud VM
+## 1. Create the Azure VM
 
-**Use an Ampere A1 (ARM) instance — not the 1 GB AMD micro.** This stack runs
-Elasticsearch + two Postgres + Redis + Postiz + Caddy and needs real memory.
+This stack runs Elasticsearch + two Postgres + Redis + Postiz + Caddy, so give it
+real memory — **8 GB is the practical minimum.**
 
-1. OCI Console → **Compute → Instances → Create instance**.
-2. **Image:** Ubuntu 24.04. **Shape:** `VM.Standard.A1.Flex` →
-   **4 OCPU / 24 GB** (the full Always-Free Ampere allowance; **2 OCPU / 12 GB**
-   is the practical minimum).
-3. Add your SSH public key.
-4. **Networking — open the ports.** Under the instance's VCN subnet →
-   **Security List** (or an NSG), add **Ingress** rules:
-   - Source `0.0.0.0/0`, TCP, dest port **80**
-   - Source `0.0.0.0/0`, TCP, dest port **443**
-   - (port 22 is already open for SSH)
-5. Create, and note the **public IP**.
+Azure Portal → **Create a resource → Virtual machine**:
+
+1. **Image:** Ubuntu Server **24.04 LTS**.
+2. **Size:** **`Standard_B2ms` (2 vCPU / 8 GB)** is the sweet spot. Tighter budget:
+   `B2s` (4 GB — risky with Elasticsearch). More headroom: `B4ms` (16 GB).
+   *(ARM `Bpsv2` sizes also work — the Postiz image is multi-arch — but x86 B-series
+   is simplest.)*
+3. **Authentication:** SSH public key. **Note the username you set** (default
+   `azureuser`) — you'll need it for SSH and the deploy secrets.
+4. **Disks:** OS disk **≥ 32 GB** (images alone are ~6 GB). Standard SSD is fine.
+5. **Networking → NSG inbound rules — open the ports.** Add inbound rules allowing
+   **80** and **443** (TCP, source `Any`/`0.0.0.0/0`). Port 22 is open by default.
+   You can also do this after creation under the VM's **Networking** blade.
+6. **Public IP → set it to `Static`** (Networking blade → the IP resource →
+   Configuration → Static). A dynamic IP can change on restart and break your DNS.
+7. Create, and note the **public IP**.
+
+> Unlike some clouds, Azure's Ubuntu images don't block ports with a local
+> firewall — the **NSG is the gatekeeper**. The bootstrap script detects this and
+> skips the host-firewall step automatically.
 
 ---
 
@@ -123,19 +132,20 @@ Caddy cannot issue a certificate until this resolves to the VM.
 
 ## 3. Bootstrap the VM
 
-SSH in (`ssh ubuntu@<vm-ip>`), then:
+SSH in with the username you set at creation (default `azureuser`):
+`ssh azureuser@<vm-ip>`, then run the bootstrap script. Since the repo is private,
+the simplest flow is to add the deploy key first (next step prints it) — but you
+can fetch the one script directly if you make the repo public, or just paste its
+contents in. The script:
+
+- installs Docker + the compose plugin,
+- opens the host firewall **only if** one is actually blocking (it isn't on Azure —
+  it detects this and skips, reminding you the **NSG** is what matters),
+- generates an SSH **deploy key** and prints it.
 
 ```bash
-# Fetch just the bootstrap script first (repo is private; this clones after).
-curl -fsSL https://raw.githubusercontent.com/blitzkrieg267/socialanxiety/main/scripts/bootstrap-vm.sh -o bootstrap-vm.sh
-bash bootstrap-vm.sh
+bash scripts/bootstrap-vm.sh    # after you've cloned (step 4), or paste the script in
 ```
-
-> Private repo, so the raw URL above needs the repo to allow it — easiest is to
-> SSH in and run the equivalent steps, or make the repo public. Either way the
-> script: installs Docker, **opens the VM's local iptables firewall for 80/443**
-> (Oracle's images block these by default — the #1 reason first deploys fail),
-> and prints an SSH **deploy key**.
 
 Add the printed **public** deploy key to GitHub:
 **repo → Settings → Deploy keys → Add deploy key** (write access **off**).
@@ -204,7 +214,7 @@ First boot runs DB migrations and can take a couple of minutes.
 
    ```bash
    ssh-keygen -t ed25519 -f gha_deploy -N ""
-   ssh-copy-id -i gha_deploy.pub ubuntu@<vm-ip>   # or append gha_deploy.pub to the VM's ~/.ssh/authorized_keys
+   ssh-copy-id -i gha_deploy.pub azureuser@<vm-ip>   # or append gha_deploy.pub to the VM's ~/.ssh/authorized_keys
    ```
 
 2. **GitHub → repo → Settings → Secrets and variables → Actions → New secret:**
@@ -212,9 +222,9 @@ First boot runs DB migrations and can take a couple of minutes.
    | Secret | Value |
    |---|---|
    | `VM_HOST` | VM public IP (or `post.tasklink.tech`) |
-   | `VM_SSH_USER` | `ubuntu` |
+   | `VM_SSH_USER` | `azureuser` *(whatever username you set on the VM)* |
    | `VM_SSH_KEY` | **private** key contents (`cat gha_deploy`) |
-   | `VM_PATH` | `/home/ubuntu/socialanxiety` |
+   | `VM_PATH` | `/home/azureuser/socialanxiety` |
    | `VM_SSH_KNOWN_HOSTS` | *(optional, recommended)* `ssh-keyscan -H <vm-ip>` output |
 
 3. Push to `main` — the **Actions** tab shows the deploy. Trigger manually any
@@ -255,9 +265,10 @@ make restart   # apply .env   make update   # pull + redeploy
 ```
 
 - **Temporal UI** (internal only) — tunnel from your laptop:
-  `ssh -L 8080:127.0.0.1:8080 ubuntu@<vm-ip>` then open http://localhost:8080
+  `ssh -L 8080:127.0.0.1:8080 azureuser@<vm-ip>` then open http://localhost:8080
 - **Backups**: snapshot the `postgres-volume` and `postiz-uploads` docker
-  volumes (or the whole boot volume via OCI). Postgres + uploads are your state.
+  volumes (or take an Azure disk snapshot of the OS disk). Postgres + uploads are
+  your state.
 
 ---
 
@@ -265,8 +276,8 @@ make restart   # apply .env   make update   # pull + redeploy
 
 | Symptom | Likely cause |
 |---|---|
-| Site unreachable, no cert | OCI ingress rules for 80/443 missing, **or** VM iptables still blocking (re-run bootstrap step 2) |
-| Cert fails to issue | `post.tasklink.tech` not resolving to the VM yet (`dig +short post.tasklink.tech`) |
+| Site unreachable, no cert | **NSG inbound rules for 80/443 missing** (Azure's gatekeeper) — add them on the VM's Networking blade |
+| Cert fails to issue | `post.tasklink.tech` not resolving to the VM yet (`dig +short post.tasklink.tech`), or the public IP isn't **Static** and changed |
 | Login/redirect loops | `MAIN_URL` / `FRONTEND_URL` / `NEXT_PUBLIC_BACKEND_URL` don't exactly match the public https URL |
 | DB auth errors on boot | `POSTGRES_PASSWORD` ≠ the password in `DATABASE_URL` |
-| OOM / containers killed | Using the 1 GB AMD shape — move to Ampere A1 with ≥12 GB |
+| OOM / containers killed | VM too small — use `Standard_B2ms` (8 GB) or larger |
